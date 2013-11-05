@@ -37,6 +37,7 @@ import net.liftweb.json.JObject
 import com.mongodb.QueryBuilder
 import net.liftweb.common.Loggable
 import net.liftweb.util.Helpers
+import net.liftweb.common.{Box, Full}
 
 object EnvelopeInserter extends LiftActor with Loggable{
 
@@ -77,18 +78,45 @@ object EnvelopeInserter extends LiftActor with Loggable{
       logger.info("Starting insert operation, id: " + insertID)
 
       val toMatch = identicalEnvelopes(0)
-      val qry = QueryBuilder.start("obp_transaction.details.value.amount").is(toMatch.obp_transaction.get.details.get.value.get.amount.get.toString)
-        .put("obp_transaction.other_account.holder").is(toMatch.obp_transaction.get.other_account.get.holder.get).get
+      val matches =
+        if(toMatch.obp_transaction.get.other_account.get.holder.get.isEmpty){
+          def emptyHolderOrEmptyString(holder: Box[String]): Boolean = {
+            holder match {
+              case Full(s) => s.isEmpty
+              case _ => true
+            }
+          }
 
-      //TODO: Figure out how to add date queries to the query builder, OR, preferably, use Rogue
-      val partialMatches = OBPEnvelope.findAll(qry)
-      logger.info("Insert operation id " + insertID + " # of partial matches: " + partialMatches.size)
+          val qry =
+            QueryBuilder.start("obp_transaction.details.value.amount")
+            .is(toMatch.obp_transaction.get.details.get.value.get.amount.get.toString)
+            .put("obp_transaction.details.completed")
+            .is(toMatch.obp_transaction.get.details.get.completed.get)
+            .get
 
-      val matches = partialMatches.filter(e =>{
-       e.obp_transaction.get.details.get.completed.get.equals(toMatch.obp_transaction.get.details.get.completed.get)
-      })
+          val partialMatches = OBPEnvelope.findAll(qry)
+          logger.info("Insert operation id " + insertID + " # of partial matches: " + partialMatches.size)
+
+          partialMatches.filter(e => {
+            emptyHolderOrEmptyString(e.obp_transaction.get.other_account.get.holder.valueBox)
+          })
+        }
+        else{
+          val qry =
+            QueryBuilder.start("obp_transaction.details.value.amount")
+            .is(toMatch.obp_transaction.get.details.get.value.get.amount.get.toString)
+            .put("obp_transaction.other_account.holder")
+            .is(toMatch.obp_transaction.get.other_account.get.holder.get)
+            .put("obp_transaction.details.completed")
+            .is(toMatch.obp_transaction.get.details.get.completed.get)
+            .get
+
+          val partialMatches = OBPEnvelope.findAll(qry)
+          logger.info("Insert operation id " + insertID + " # of partial matches: " + partialMatches.size)
+          partialMatches
+        }
+
       logger.info("Insert operation id " + insertID + " # of full matches: " + matches.size)
-
       val copiesToInsert = identicalEnvelopes drop matches.size
       logger.info("Insert operation id " + insertID + " copies being inserted: " + copiesToInsert.size)
 
