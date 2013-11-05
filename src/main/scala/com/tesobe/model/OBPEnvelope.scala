@@ -182,7 +182,6 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
   }
   def createAliases : Box[String] = {
     val realOtherAccHolder = this.obp_transaction.get.other_account.get.holder.get
-
     def publicAliasExists(realValue: String): Boolean = {
       this.theAccount match {
         case Full(a) => {
