@@ -358,8 +358,7 @@ object OBPBank extends OBPBank with BsonMetaRecord[OBPBank]
 class OBPDetails private() extends BsonRecord[OBPDetails]{
   def meta = OBPDetails
 
-  object type_en extends net.liftweb.record.field.StringField(this, 255)
-  object type_de extends net.liftweb.record.field.StringField(this, 255)
+  object kind extends net.liftweb.record.field.StringField(this, 255)
   object posted extends DateField(this)
   object other_data extends net.liftweb.record.field.StringField(this, 5000)
   object new_balance extends BsonRecordField(this, OBPBalance)
@@ -373,8 +372,7 @@ class OBPDetails private() extends BsonRecord[OBPDetails]{
   }
 
   def whenAddedJson : JObject = {
-    JObject(List( JField("type_en", JString(type_en.get)),
-              JField("type_de", JString(type_de.get)),
+    JObject(List( JField("kind", JString(kind.get)),
               JField("posted", JString(formatDate(posted.get))),
               JField("completed", JString(formatDate(completed.get))),
               JField("other_data", JString(other_data.get)),

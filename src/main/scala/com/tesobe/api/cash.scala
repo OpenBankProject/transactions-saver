@@ -137,8 +137,7 @@ object CashAccountAPI extends RestHelper with Loggable {
                     amount(amount)
 
                   val details = OBPDetails.createRecord.
-                    type_en("cash").
-                    type_de("Bargeld").
+                    kind("cash").
                     posted(cashTransaction.date).
                     other_data(cashTransaction.otherInformation).
                     new_balance(newBalance).
