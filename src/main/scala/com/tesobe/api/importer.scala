@@ -56,6 +56,8 @@ import _root_.net.liftweb.mapper.view._
 import com.tesobe.model._
 import java.util.Date
 import net.liftweb.json.Extraction
+import net.liftweb.mongodb.BsonDSL._
+
 
 
 object ImporterAPI extends RestHelper with Loggable {
@@ -209,22 +211,21 @@ object ImporterAPI extends RestHelper with Loggable {
               if(envelopes.size!=0) {
                 //we assume here that all the Envelopes concerns only one account
                 val accountNumber = envelopes(0).obp_transaction.get.this_account.get.number.get
-                val bankName = envelopes(0).obp_transaction.get.this_account.get.bank.get.name.get
-                val accountKind = envelopes(0).obp_transaction.get.this_account.get.kind.get
-                val holder = envelopes(0).obp_transaction.get.this_account.get.holder.get
-                //Get all accounts with this account number and kind
-                val accounts = Account.findAll(("number" -> accountNumber) ~ ("kind" -> accountKind) ~ ("holder" -> holder))
-                //Now get the one that actually belongs to the right bank
-                val wantedAccount = accounts.find(_.bankName == bankName)
+                val bankId = envelopes(0).obp_transaction.get.this_account.get.bank.get.national_identifier.get
+
+                val wantedAccount =
+                  for{
+                    bank <- HostedBank.find("national_identifier", bankId)
+                    account <- Account.find(("number" -> accountNumber) ~ ("bankID", bank.id.get))
+                  } yield account
                 wantedAccount match {
-                  case Some(account) =>  {
+                  case Full(account) =>  {
                     def updateAccountBalance() = {
                       val newest = OBPEnvelope.findAll(("obp_transaction.this_account.number" -> accountNumber) ~
-                                       ("obp_transaction.this_account.kind" -> accountKind) ~
-                                       ("obp_transaction.this_account.bank.name" -> bankName),
+                                       ("obp_transaction.this_account.bank.national_identifier" -> bankId),
                                        ("obp_transaction.details.completed" -> -1), Limit(1)).headOption
                       if(newest.isDefined) {
-                        logger.debug("Updating current balance for " + bankName + "/" + accountNumber + "/" + accountKind)
+                        logger.debug("Updating current balance for " + bankId + "/" + accountNumber )
                         account.balance(newest.get.obp_transaction.get.details.get.new_balance.get.amount.get).save
                       }
                       else logger.warn("Could not update latest account balance")
@@ -232,7 +233,7 @@ object ImporterAPI extends RestHelper with Loggable {
                     account.lastUpdate(new Date).save
                     updateAccountBalance()
                   }
-                  case _ => logger.info("BankName/accountNumber/kind not found :  " + bankName + "/" + accountNumber + "/" + accountKind)
+                  case _ => logger.info("BankName/accountNumber not found :  " + bankId + "/" + accountNumber )
                 }
               }
               JsonResponse(JArray(l))
