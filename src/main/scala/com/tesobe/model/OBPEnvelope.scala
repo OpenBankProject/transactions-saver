@@ -254,7 +254,11 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
           Full({})
         }
         case _ => {
-          logger.warn("Account not found to create aliases for")
+          val thisAcc = obp_transaction.get.this_account.get
+          val num = thisAcc.number.get
+          val bankId = thisAcc.bank.get.national_identifier.get
+          val error = "could not create aliases for account "+num+" at bank " +bankId
+          logger.warn(error)
           Failure("Account not found to create aliases for")
         }
       }
@@ -302,7 +306,8 @@ object OBPEnvelope extends OBPEnvelope with MongoMetaRecord[OBPEnvelope] with Lo
 
   def envlopesFromJvalue(jval: JValue) : Box[OBPEnvelope] = {
     val created = fromJValue(jval)
-    if(created.get.validate.isEmpty)
+    val errors = created.get.validate
+    if(errors.isEmpty)
       created match {
         case Full(c) => c.createAliases match {
             case Full(_) => Full(c)
@@ -313,7 +318,7 @@ object OBPEnvelope extends OBPEnvelope with MongoMetaRecord[OBPEnvelope] with Lo
       }
     else{
       logger.warn("could not create a obp envelope.errors: ")
-      logger.warn(created.get.validate)
+      logger.warn(errors)
       Empty
     }
   }
@@ -327,6 +332,21 @@ class OBPTransaction private() extends BsonRecord[OBPTransaction]{
   object other_account extends BsonRecordField(this, OBPAccount)
   object details extends BsonRecordField(this, OBPDetails)
 
+  private def validateThisAccount: List[FieldError] = {
+    val accountNumber = this_account.get.number
+    val bankId = this_account.get.bank.get.national_identifier
+    val accountNumberError =
+      if(accountNumber.get.isEmpty)
+        Some(new FieldError(accountNumber, Unparsed("this bank account number is empty")))
+      else
+        None
+    val bankIdError =
+      if(bankId.get.isEmpty)
+        Some(new FieldError(bankId, Unparsed("this bank number is empty")))
+      else
+        None
+    List(accountNumberError, bankIdError).flatten
+  }
   override def validate: List[FieldError] =
     this_account.get.validate ++
     other_account.get.validate ++

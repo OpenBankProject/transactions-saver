@@ -80,6 +80,7 @@ object EnvelopeInserter extends LiftActor with Loggable{
       val toMatch = identicalEnvelopes(0)
       val matches =
         if(toMatch.obp_transaction.get.other_account.get.holder.get.isEmpty){
+          logger.info("for operation " + insertID + " holder is empty")
           def emptyHolderOrEmptyString(holder: Box[String]): Boolean = {
             holder match {
               case Full(s) => s.isEmpty
@@ -102,6 +103,7 @@ object EnvelopeInserter extends LiftActor with Loggable{
           })
         }
         else{
+          logger.info("for operation " + insertID + " holder not empty")
           val qry =
             QueryBuilder.start("obp_transaction.details.value.amount")
             .is(toMatch.obp_transaction.get.details.get.value.get.amount.get.toString)
