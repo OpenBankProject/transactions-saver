@@ -52,7 +52,10 @@ import org.bson.types.ObjectId
 import net.liftweb.util.Helpers._
 import net.liftweb.http.S
 import java.net.URL
-import net.liftweb.record.field.{DoubleField,DecimalField}
+import net.liftweb.record.field.{DoubleField,DecimalField, StringField, StringTypedField}
+import net.liftweb.util.FieldError
+import scala.xml.{NodeSeq, Unparsed}
+
 
 /**
  * "Current Account View"
@@ -151,6 +154,10 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
   // This creates a json attribute called "obp_transaction"
   object obp_transaction extends BsonRecordField(this, OBPTransaction)
 
+  override def validate: List[FieldError] =
+    obp_transaction.get.validate ++
+    super.validate
+
   object DateDescending extends Ordering[OBPEnvelope] {
     def compare(e1: OBPEnvelope, e2: OBPEnvelope) = {
       val date1 = e1.obp_transaction.get.details.get.completed.get
@@ -162,15 +169,10 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
   lazy val theAccount = {
     val thisAcc = obp_transaction.get.this_account.get
     val num = thisAcc.number.get
-    val accKind = thisAcc.kind.get
-    val bankName = thisAcc.bank.get.name.get
-    val holder = thisAcc.holder.get
-    val accQry = QueryBuilder.start("number").is(num).
-      put("kind").is(accKind).put("holder").is(holder).get
-
+    val bankId = thisAcc.bank.get.national_identifier.get
     for {
-      account <- Account.find(accQry)
-      bank <- HostedBank.find("name", bankName)
+      account <- Account.find("number", num)
+      bank <- HostedBank.find("national_identifier", bankId)
       if(bank.id.get == account.bankID.get)
     } yield account
   }
@@ -180,21 +182,32 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
     val date2 = e2.obp_transaction.get.details.get.completed.get
     date1.after(date2)
   }
-  def createAliases : Box[String] = {
+  def createAliases : Box[Unit] = {
     val realOtherAccHolder = this.obp_transaction.get.other_account.get.holder.get
     def publicAliasExists(realValue: String): Boolean = {
       this.theAccount match {
         case Full(a) => {
-          val otherAccs = a.otherAccounts.objs
-          val aliasInQuestion = otherAccs.find(o =>
-            o.holder.get.equals(realValue))
+          val otherAccs = a.otherAccountsMetadata.objs
+          val aliasInQuestion: Option[Metadata] =
+            otherAccs.find(o =>{
+                o.holder.get.equals(realValue)
+              }
+            )
+          logger.info("metadata for holder " + realValue +" found? " + aliasInQuestion.isDefined)
+          aliasInQuestion match {
+            case Some(metadata) => {
+                logger.info("setting up the reference to the other account metadata")
+                this.obp_transaction.get.other_account.get.metadata(metadata.id.is)
+              }
+            case _ =>
+          }
           aliasInQuestion.isDefined
         }
         case _ => false
       }
     }
 
-    def createPublicAlias(realOtherAccHolder : String) : Box[String] = {
+    def createPublicAlias(realOtherAccHolder : String) : Box[Unit] = {
 
       /**
        * Generates a new alias name that is guaranteed not to collide with any existing public alias names
@@ -207,7 +220,7 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
          * Returns true if @publicAlias is already the name of a public alias within @account
          */
         def isDuplicate(publicAlias: String, account: Account) = {
-          account.otherAccounts.objs.find(oAcc => {
+          account.otherAccountsMetadata.objs.find(oAcc => {
             oAcc.publicAlias.get == publicAlias
           }).isDefined
         }
@@ -227,23 +240,39 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
 
       this.theAccount match {
         case Full(a) => {
+          logger.info("creating alias for " + realOtherAccHolder)
           val randomAliasName = newPublicAliasName(a)
           //create a new "otherAccount"
-          val otherAccount = OtherAccount.createRecord.holder(realOtherAccHolder).publicAlias(randomAliasName).save
-          a.otherAccounts(otherAccount.id.is :: a.otherAccounts.get).save
-          Full(randomAliasName)
+          val metadata =
+            Metadata
+            .createRecord
+            .holder(realOtherAccHolder)
+            .publicAlias(randomAliasName)
+            .save
+          this.obp_transaction.get.other_account.get.metadata(metadata.id.is)
+          a.otherAccountsMetadata(metadata.id.is :: a.otherAccountsMetadata.get).save
+          Full({})
         }
         case _ => {
-          logger.warn("Account not found to create aliases for")
+          val thisAcc = obp_transaction.get.this_account.get
+          val num = thisAcc.number.get
+          val bankId = thisAcc.bank.get.national_identifier.get
+          val error = "could not create aliases for account "+num+" at bank " +bankId
+          logger.warn(error)
           Failure("Account not found to create aliases for")
         }
       }
     }
 
-    if (!publicAliasExists(realOtherAccHolder))
+    if(realOtherAccHolder.isEmpty)
+      //no holder name, nothing to hide, so no alias
+      //other wise several transactions where the holder
+      //would automatically share the same alias and metadata
+      Full()
+    else if (!publicAliasExists(realOtherAccHolder))
       createPublicAlias(realOtherAccHolder)
     else
-      Full(realOtherAccHolder)
+      Full()
   }
   /**
    * A JSON representation of the transaction to be returned when successfully added via an API call
@@ -277,13 +306,20 @@ object OBPEnvelope extends OBPEnvelope with MongoMetaRecord[OBPEnvelope] with Lo
 
   def envlopesFromJvalue(jval: JValue) : Box[OBPEnvelope] = {
     val created = fromJValue(jval)
-    created match {
-      case Full(c) => c.createAliases match {
-          case Full(alias) => Full(c)
-          case Failure(msg, _, _ ) => Failure(msg)
-          case _ => Failure("Alias not created")
-        }
-      case _ => Failure("could not create Envelope form JValue")
+    val errors = created.get.validate
+    if(errors.isEmpty)
+      created match {
+        case Full(c) => c.createAliases match {
+            case Full(_) => Full(c)
+            case Failure(msg, _, _ ) => Failure(msg)
+            case _ => Failure("Alias not created")
+          }
+        case _ => Failure("could not create Envelope form JValue")
+      }
+    else{
+      logger.warn("could not create a obp envelope.errors: ")
+      logger.warn(errors)
+      Empty
     }
   }
 }
@@ -295,6 +331,27 @@ class OBPTransaction private() extends BsonRecord[OBPTransaction]{
   object this_account extends BsonRecordField(this, OBPAccount)
   object other_account extends BsonRecordField(this, OBPAccount)
   object details extends BsonRecordField(this, OBPDetails)
+
+  private def validateThisAccount: List[FieldError] = {
+    val accountNumber = this_account.get.number
+    val bankId = this_account.get.bank.get.national_identifier
+    val accountNumberError =
+      if(accountNumber.get.isEmpty)
+        Some(new FieldError(accountNumber, Unparsed("this bank account number is empty")))
+      else
+        None
+    val bankIdError =
+      if(bankId.get.isEmpty)
+        Some(new FieldError(bankId, Unparsed("this bank number is empty")))
+      else
+        None
+    List(accountNumberError, bankIdError).flatten
+  }
+  override def validate: List[FieldError] =
+    this_account.get.validate ++
+    other_account.get.validate ++
+    details.get.validate ++
+    super.validate
 
   def whenAddedJson(envelopeId : String) : JObject  = {
     JObject(List(JField("obp_transaction_uuid", JString(envelopeId)),
@@ -309,10 +366,28 @@ object OBPTransaction extends OBPTransaction with BsonMetaRecord[OBPTransaction]
 class OBPAccount private() extends BsonRecord[OBPAccount]{
   def meta = OBPAccount
 
-  object holder extends StringField(this, 255)
-  object number extends StringField(this, 255)
-  object kind extends StringField(this, 255)
+  object metadata extends ObjectIdRefField(this, Metadata)
+  object holder extends StringField(this, 255){
+    override def required_? = false
+    override def optional_? = true
+  }
+
+  object number extends StringField(this, 255){
+    override def required_? = false
+    override def optional_? = true
+  }
+  object kind extends StringField(this, 255){
+    override def required_? = false
+    override def optional_? = true
+  }
   object bank extends BsonRecordField(this, OBPBank)
+
+  override def validate: List[FieldError] =
+    holder.validate ++
+    number.validate ++
+    kind.validate ++
+    bank.validate ++
+    super.validate
 
   /**
    * @param moderatingAccount a temporary way to provide the obp account whose aliases should
@@ -343,6 +418,11 @@ class OBPBank private() extends BsonRecord[OBPBank]{
   object national_identifier extends net.liftweb.record.field.StringField(this, 255)
   object name extends net.liftweb.record.field.StringField(this, 255)
 
+  override def validate: List[FieldError] =
+    IBAN.validate ++
+    national_identifier.validate ++
+    name.validate ++
+    super.validate
 
   def whenAddedJson : JObject = {
     JObject(List( JField("IBAN", JString(IBAN.get)),
@@ -358,23 +438,39 @@ object OBPBank extends OBPBank with BsonMetaRecord[OBPBank]
 class OBPDetails private() extends BsonRecord[OBPDetails]{
   def meta = OBPDetails
 
-  object type_en extends net.liftweb.record.field.StringField(this, 255)
-  object type_de extends net.liftweb.record.field.StringField(this, 255)
+  object kind extends net.liftweb.record.field.StringField(this, 255){
+    override def required_? = false
+    override def optional_? = true
+  }
   object posted extends DateField(this)
-  object other_data extends net.liftweb.record.field.StringField(this, 5000)
+  object other_data extends net.liftweb.record.field.StringField(this, 5000){
+    override def required_? = false
+    override def optional_? = true
+  }
   object new_balance extends BsonRecordField(this, OBPBalance)
   object value extends BsonRecordField(this, OBPValue)
   object completed extends DateField(this)
-  object label extends net.liftweb.record.field.StringField(this, 255)
+  object label extends net.liftweb.record.field.StringField(this, 255){
+    override def required_? = false
+    override def optional_? = true
+  }
 
+  override def validate: List[FieldError] =
+    kind.validate ++
+    posted.validate ++
+    other_data.validate ++
+    new_balance.validate ++
+    value.validate ++
+    completed.validate ++
+    label.validate ++
+    super.validate
 
   def formatDate(date : Date) : String = {
     OBPDetails.formats.dateFormat.format(date)
   }
 
   def whenAddedJson : JObject = {
-    JObject(List( JField("type_en", JString(type_en.get)),
-              JField("type_de", JString(type_de.get)),
+    JObject(List( JField("kind", JString(kind.get)),
               JField("posted", JString(formatDate(posted.get))),
               JField("completed", JString(formatDate(completed.get))),
               JField("other_data", JString(other_data.get)),
@@ -392,6 +488,11 @@ class OBPBalance private() extends BsonRecord[OBPBalance]{
   object currency extends StringField(this, 5)
   object amount extends DecimalField(this, 0) // ok to use decimal?
 
+  override def validate: List[FieldError] =
+    currency.validate ++
+    amount.validate ++
+    super.validate
+
   def whenAddedJson : JObject = {
     JObject(List( JField("currency", JString(currency.get)),
               JField("amount", JString(amount.get.toString))))
@@ -405,6 +506,11 @@ class OBPValue private() extends BsonRecord[OBPValue]{
 
   object currency extends net.liftweb.record.field.StringField(this, 5)
   object amount extends net.liftweb.record.field.DecimalField(this, 0) // ok to use decimal?
+
+  override def validate: List[FieldError] =
+    currency.validate ++
+    amount.validate ++
+    super.validate
 
   def whenAddedJson : JObject = {
     JObject(List( JField("currency", JString(currency.get)),

@@ -74,7 +74,7 @@ class Account extends MongoRecord[Account] with ObjectIdPk[Account] {
   object currency extends StringField(this, 255)
   object iban extends StringField(this, 255)
   object lastUpdate extends DateField(this)
-  object otherAccounts extends ObjectIdRefListField(this, OtherAccount)
+  object otherAccountsMetadata extends ObjectIdRefListField(this, Metadata)
 
   def bankName : String = bankID.obj match  {
     case Full(bank) => bank.name.get
@@ -121,10 +121,10 @@ class Account extends MongoRecord[Account] with ObjectIdPk[Account] {
 
 object Account extends Account with MongoMetaRecord[Account]
 
-class OtherAccount private() extends MongoRecord[OtherAccount] with ObjectIdPk[OtherAccount] {
-  def meta = OtherAccount
+class Metadata private() extends MongoRecord[Metadata] with ObjectIdPk[Metadata] {
+  def meta = Metadata
 
-  object holder extends StringField(this, 200)
+  object holder extends StringField(this, 255)
   object publicAlias extends StringField(this, 100)
   object privateAlias extends StringField(this, 100)
   object moreInfo extends StringField(this, 100)
@@ -135,7 +135,7 @@ class OtherAccount private() extends MongoRecord[OtherAccount] with ObjectIdPk[O
   }
 }
 
-object OtherAccount extends OtherAccount with MongoMetaRecord[OtherAccount]
+object Metadata extends Metadata with MongoMetaRecord[Metadata]
 
 class HostedBank extends MongoRecord[HostedBank] with ObjectIdPk[HostedBank]{
   def meta = HostedBank
