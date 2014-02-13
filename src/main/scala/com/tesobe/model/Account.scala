@@ -42,7 +42,7 @@ import net.liftweb.mongodb.record.MongoRecord
 import net.liftweb.mongodb.record.field.ObjectIdRefField
 import net.liftweb.mongodb.record.field.MongoJsonObjectListField
 import net.liftweb.mongodb.record.field.DateField
-import net.liftweb.common.{ Box, Empty, Full, Failure }
+import net.liftweb.common.{Box, Empty, Full, Failure, Loggable}
 import net.liftweb.mongodb.record.field.BsonRecordField
 import net.liftweb.mongodb.record.{ BsonRecord, BsonMetaRecord }
 import net.liftweb.record.field.{ StringField, BooleanField, DecimalField }
@@ -59,7 +59,7 @@ import OBPEnvelope._
  * this account, rather than needing to duplicate the aliases into every single transaction.
  */
 
-class Account extends MongoRecord[Account] with ObjectIdPk[Account] {
+class Account extends MongoRecord[Account] with ObjectIdPk[Account] with Loggable{
   def meta = Account
 
   object balance extends DecimalField(this, 0)
@@ -116,6 +116,16 @@ class Account extends MongoRecord[Account] with ObjectIdPk[Account] {
     val ordering =  QueryBuilder.start(orderingParams.field.getOrElse(DefaultSortField)).is(orderingParams.order.orderValue).get
 
     OBPEnvelope.findAll(mongoParams, ordering, Limit(limit), Skip(offset))
+  }
+
+  def appendMetadata(metadata: Metadata): Unit = {
+    logger.info("appending the metadata record to the existing metadata references")
+    println("metadata id: " + metadata.id.is)
+    println("existing other account meta data " + this.otherAccountsMetadata.get)
+    this.otherAccountsMetadata(metadata.id.is :: this.otherAccountsMetadata.get)
+    this.save
+    println("other accounts meta data after saving: ")
+    println(this.otherAccountsMetadata.get)
   }
 }
 
