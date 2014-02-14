@@ -32,12 +32,12 @@ Berlin 13359, Germany
 package com.tesobe.actors
 
 import net.liftweb.actor.LiftActor
-import com.tesobe.model.OBPEnvelope
+import com.tesobe.model.{OBPEnvelope, EnvelopesToInsert, InsertedEnvelopes}
 import net.liftweb.json.JObject
 import com.mongodb.QueryBuilder
 import net.liftweb.common.Loggable
 import net.liftweb.util.Helpers
-import net.liftweb.common.{Box, Full}
+import net.liftweb.common.{Box, Full, Failure, Empty}
 
 object EnvelopeInserter extends LiftActor with Loggable{
 
@@ -69,7 +69,7 @@ object EnvelopeInserter extends LiftActor with Loggable{
    *  If this method receives 3 identical envelopes, and 3 copies exist in the
    *  database, then 0 more should be added.
    */
-  def insert(identicalEnvelopes : List[OBPEnvelope]) : List[JObject] = {
+  def insert(identicalEnvelopes : List[OBPEnvelope]) : List[OBPEnvelope] = {
     if(identicalEnvelopes.size == 0){
       Nil
     }else{
@@ -122,15 +122,28 @@ object EnvelopeInserter extends LiftActor with Loggable{
       val copiesToInsert = identicalEnvelopes drop matches.size
       logger.info("Insert operation id " + insertID + " copies being inserted: " + copiesToInsert.size)
 
-      copiesToInsert.map(e => {
-        val record = e.saveTheRecord()
-        record.get.whenAddedJson //TODO: Standardise this format with API "get" format?
-      })
+      copiesToInsert.flatMap(e => {
+          e.createMetadataReference match {
+            case Full(_) => {
+              e.saveTheRecord()
+              Full(e)
+            }
+            case Failure(msg, _, _ ) => {
+              logger.warn("could not save envelope ${e.id.get} because we could not create a meta data reference.\n Error: "+msg)
+              Empty
+            }
+            case _ =>{
+              logger.warn("could not save envelope ${e.id.get} because we could not create a meta data reference.")
+              Empty
+            }
+          }
+        }
+      )
     }
   }
 
   def messageHandler = {
-    case envelopes : List[OBPEnvelope] => {
+    case EnvelopesToInsert(envelopes: List[OBPEnvelope]) => {
 
       /**
        * Example:
@@ -155,9 +168,14 @@ object EnvelopeInserter extends LiftActor with Loggable{
 
       val grouped = groupIdenticals(envelopes)
 
-      reply(grouped.map(identicals => {
-        insert(identicals)
-      }).flatten)
+      val insertedEnvelopes =
+        grouped
+        .map(identicals => insert(identicals))
+        .flatten
+
+      reply(
+        InsertedEnvelopes(insertedEnvelopes)
+      )
     }
   }
 
