@@ -147,6 +147,9 @@ curl -i -H "Content-Type: application/json" -X POST -d '[{
  }]' http://localhost:8080/api/transactions
  */
 
+case class EnvelopesToInsert(l: List[OBPEnvelope])
+case class InsertedEnvelopes(l: List[OBPEnvelope])
+
 // Seems to map to a collection of the plural name
 class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBPEnvelope] with Loggable{
   def meta = OBPEnvelope
@@ -308,11 +311,7 @@ object OBPEnvelope extends OBPEnvelope with MongoMetaRecord[OBPEnvelope] with Lo
     val errors = created.get.validate
     if(errors.isEmpty)
       created match {
-        case Full(c) => c.createMetadataReference match {
-            case Full(_) => Full(c)
-            case Failure(msg, _, _ ) => Failure(msg)
-            case _ => Failure("Alias not created")
-          }
+        case Full(e) => Full(e)
         case _ => Failure("could not create Envelope form JValue")
       }
     else{

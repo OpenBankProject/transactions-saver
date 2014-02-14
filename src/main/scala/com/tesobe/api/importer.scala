@@ -94,12 +94,13 @@ object ImporterAPI extends RestHelper with Loggable {
          * is too inefficient. If it is, we could break it up into one actor
          * per "Account".
          */
-        val createdEnvelopes = EnvelopeInserter !? (3 seconds, matchingEnvelopes)
+        val l = EnvelopesToInsert(matchingEnvelopes)
+        val createdEnvelopes = EnvelopeInserter !? (3 seconds, l)
 
         createdEnvelopes match {
-          case Full(l: List[JObject]) =>{
-            if(matchingEnvelopes.size!=0)
-            {
+          case Full(env: InsertedEnvelopes) =>{
+            val insertedEnvelopes = env.l
+            if(insertedEnvelopes.size!=0){
               Account.find(("number" -> Props.get("exceptional_account_number").getOrElse("")) ~
                 ("bankName" -> Props.get("exceptional_account_bankName").getOrElse("")) ~
                 ("kind" -> Props.get("exceptional_account_kind").getOrElse("")))
@@ -108,7 +109,8 @@ object ImporterAPI extends RestHelper with Loggable {
                 case _ =>
               }
             }
-            JsonResponse(JArray(l))
+            val jsonList = insertedEnvelopes.map(_.whenAddedJson)
+            JsonResponse(JArray(jsonList))
           }
           case _ => InternalServerErrorResponse()
         }
@@ -187,6 +189,39 @@ object ImporterAPI extends RestHelper with Loggable {
           OBPEnvelope.envlopesFromJvalue(e)
         })
 
+        def updateAccountBalance(accountNumber: String, bankId: String, account: Account) = {
+          val newest =
+            OBPEnvelope.findAll(
+              ("obp_transaction.this_account.number" -> accountNumber) ~
+              ("obp_transaction.this_account.bank.national_identifier" -> bankId),
+              ("obp_transaction.details.completed" -> -1),
+              Limit(1)
+            ).headOption
+
+          if(newest.isDefined) {
+            logger.debug(s"Updating current balance for account $accountNumber at bank $bankId")
+            account.balance(newest.get.obp_transaction.get.details.get.new_balance.get.amount.get).save
+          }
+          else
+            logger.warn("Could not update the balance for the account $accountNumber at bank $bankId")
+        }
+        def updateBankAccount(insertedEnvelopes: List[OBPEnvelope]) = {
+          if(insertedEnvelopes.nonEmpty) {
+            //we assume here that all the Envelopes concerns only one account
+            val envelope = insertedEnvelopes(0)
+            val thisAccount = envelope.obp_transaction.get.this_account.get
+            val accountNumber = thisAccount.number.get
+            val bankId = thisAccount.bank.get.national_identifier.get
+            envelope.theAccount match {
+              case Full(account) =>  {
+                account.lastUpdate(new Date).save
+                updateAccountBalance(accountNumber, bankId, account)
+              }
+              case _ => logger.info("account $accountNumber at bank $bankId not found")
+            }
+          }
+        }
+
         val ipAddress = json._2.remoteAddr
         logger.info("Received " + rawEnvelopes.size +
           " json transactions to insert from ip address " + ipAddress)
@@ -201,43 +236,22 @@ object ImporterAPI extends RestHelper with Loggable {
        * per "Account".
        */
 
-        val createdEnvelopes = EnvelopeInserter !? (3 seconds, envelopes)
+        val l = EnvelopesToInsert(envelopes)
+        // TODO: this duration limit should be fixed
+        val createdEnvelopes = EnvelopeInserter !? (3 minutes, l)
 
         createdEnvelopes match {
-          case Full(l: List[JObject]) =>{
-              logger.info("inserted " + l.size + " transactions")
-              if(envelopes.size!=0) {
-                //we assume here that all the Envelopes concerns only one account
-                val accountNumber = envelopes(0).obp_transaction.get.this_account.get.number.get
-                val bankName = envelopes(0).obp_transaction.get.this_account.get.bank.get.name.get
-                val accountKind = envelopes(0).obp_transaction.get.this_account.get.kind.get
-                val holder = envelopes(0).obp_transaction.get.this_account.get.holder.get
-                //Get all accounts with this account number and kind
-                val accounts = Account.findAll(("number" -> accountNumber) ~ ("kind" -> accountKind) ~ ("holder" -> holder))
-                //Now get the one that actually belongs to the right bank
-                val wantedAccount = accounts.find(_.bankName == bankName)
-                wantedAccount match {
-                  case Some(account) =>  {
-                    def updateAccountBalance() = {
-                      val newest = OBPEnvelope.findAll(("obp_transaction.this_account.number" -> accountNumber) ~
-                                       ("obp_transaction.this_account.kind" -> accountKind) ~
-                                       ("obp_transaction.this_account.bank.name" -> bankName),
-                                       ("obp_transaction.details.completed" -> -1), Limit(1)).headOption
-                      if(newest.isDefined) {
-                        logger.debug("Updating current balance for " + bankName + "/" + accountNumber + "/" + accountKind)
-                        account.balance(newest.get.obp_transaction.get.details.get.new_balance.get.amount.get).save
-                      }
-                      else logger.warn("Could not update latest account balance")
-                    }
-                    account.lastUpdate(new Date).save
-                    updateAccountBalance()
-                  }
-                  case _ => logger.info("BankName/accountNumber/kind not found :  " + bankName + "/" + accountNumber + "/" + accountKind)
-                }
-              }
-              JsonResponse(JArray(l))
+          case Full(env: InsertedEnvelopes) =>{
+            val insertedEnvelopes = env.l
+              logger.info("inserted " + insertedEnvelopes.size + " transactions")
+              updateBankAccount(insertedEnvelopes)
+              val jsonList = insertedEnvelopes.map(_.whenAddedJson)
+              JsonResponse(JArray(jsonList))
             }
-          case _ => InternalServerErrorResponse()
+          case _ => {
+            logger.warn("no envelopes inserted")
+            InternalServerErrorResponse()
+          }
         }
       }
 

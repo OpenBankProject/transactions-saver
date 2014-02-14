@@ -120,12 +120,8 @@ class Account extends MongoRecord[Account] with ObjectIdPk[Account] with Loggabl
 
   def appendMetadata(metadata: Metadata): Unit = {
     logger.info("appending the metadata record to the existing metadata references")
-    println("metadata id: " + metadata.id.is)
-    println("existing other account meta data " + this.otherAccountsMetadata.get)
     this.otherAccountsMetadata(metadata.id.is :: this.otherAccountsMetadata.get)
     this.save
-    println("other accounts meta data after saving: ")
-    println(this.otherAccountsMetadata.get)
   }
 }
 
