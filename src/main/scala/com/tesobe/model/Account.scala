@@ -45,11 +45,19 @@ import net.liftweb.mongodb.record.field.DateField
 import net.liftweb.common.{Box, Empty, Full, Failure, Loggable}
 import net.liftweb.mongodb.record.field.BsonRecordField
 import net.liftweb.mongodb.record.{ BsonRecord, BsonMetaRecord }
-import net.liftweb.record.field.{ StringField, BooleanField, DecimalField }
+import net.liftweb.record.field._
 import net.liftweb.mongodb.{Limit, Skip}
 import net.liftweb.mongodb.BsonDSL._
 import java.util.Date
 import OBPEnvelope._
+import com.tesobe.model.OBPEnvelope.OBPOffset
+import com.tesobe.model.OBPEnvelope.OBPFromDate
+import net.liftweb.common.Full
+import scala.Some
+import com.tesobe.model.OBPEnvelope.OBPLimit
+import com.tesobe.model.OBPEnvelope.OBPOrdering
+import net.liftweb.mongodb.Limit
+import net.liftweb.mongodb.Skip
 
 
 /**
@@ -130,6 +138,11 @@ object Account extends Account with MongoMetaRecord[Account]
 class Metadata private() extends MongoRecord[Metadata] with ObjectIdPk[Metadata] {
   def meta = Metadata
 
+  //originalPartyBankId and originalPartyAccountId are used to identify the account
+  //which has the counterparty this metadata is associated with
+  object originalPartyBankId extends StringField(this, 100)
+  object originalPartyAccountId extends StringField(this, 100)
+
   object holder extends StringField(this, 255)
   object publicAlias extends StringField(this, 100)
   object privateAlias extends StringField(this, 100)
@@ -139,9 +152,64 @@ class Metadata private() extends MongoRecord[Metadata] with ObjectIdPk[Metadata]
   object openCorporatesUrl extends StringField(this, 100) {
     override def optional_? = true
   }
+  object corporateLocation extends BsonRecordField(this, OBPGeoTag)
+  object physicalLocation extends BsonRecordField(this, OBPGeoTag)
+
+  def addCorporateLocation(userId: String, viewId : Long, datePosted : Date, longitude : Double, latitude : Double) : Boolean = {
+    val newTag = OBPGeoTag.createRecord.
+      userId(userId).
+      viewID(viewId).
+      date(datePosted).
+      geoLongitude(longitude).
+      geoLatitude(latitude)
+    corporateLocation(newTag).save
+    true
+  }
+
+  def deleteCorporateLocation : Boolean = {
+    corporateLocation.clear
+    this.save
+    true
+  }
+
+  def addPhysicalLocation(userId: String, viewId : Long, datePosted : Date, longitude : Double, latitude : Double) : Boolean = {
+    val newTag = OBPGeoTag.createRecord.
+      userId(userId).
+      viewID(viewId).
+      date(datePosted).
+      geoLongitude(longitude).
+      geoLatitude(latitude)
+    physicalLocation(newTag).save
+    true
+  }
+
+  def deletePhysicalLocation : Boolean = {
+    physicalLocation.clear
+    this.save
+    true
+  }
+
 }
 
 object Metadata extends Metadata with MongoMetaRecord[Metadata]
+
+class OBPGeoTag private() extends BsonRecord[OBPGeoTag] {
+  def meta = OBPGeoTag
+
+  //These fields are used to link this to its transaction
+  object transactionId extends StringField(this, 255)
+  object accountId extends StringField(this, 255)
+  object bankId extends StringField(this, 255)
+
+  object userId extends StringField(this,255)
+  object viewID extends LongField(this)
+  object date extends DateField(this)
+
+  object geoLongitude extends DoubleField(this,0)
+  object geoLatitude extends DoubleField(this,0)
+
+}
+object OBPGeoTag extends OBPGeoTag with BsonMetaRecord[OBPGeoTag]
 
 class HostedBank extends MongoRecord[HostedBank] with ObjectIdPk[HostedBank]{
   def meta = HostedBank

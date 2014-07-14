@@ -232,9 +232,11 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
             //would automatically share the metadata and then the alias
             val metadata =
               Metadata
-              .createRecord
-              .holder("")
-              .save
+                .createRecord
+                .originalPartyBankId(a.bankPermalink)
+                .originalPartyAccountId(a.permalink.get)
+                .holder("")
+                .save
             a.appendMetadata(metadata)
             metadata
           }
@@ -252,10 +254,12 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
                 //create a new meta data record for the other account
                 val metadata =
                   Metadata
-                  .createRecord
-                  .holder(realOtherAccHolder)
-                  .publicAlias(randomAliasName)
-                  .save
+                    .createRecord
+                    .originalPartyBankId(a.bankPermalink)
+                    .originalPartyAccountId(a.permalink.get)
+                    .holder(realOtherAccHolder)
+                    .publicAlias(randomAliasName)
+                    .save
                 a.appendMetadata(metadata)
                 metadata
               }
