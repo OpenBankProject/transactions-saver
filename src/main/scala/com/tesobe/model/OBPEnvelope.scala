@@ -187,36 +187,38 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
   }
 
   /**
-  * Generates a new alias name that is guaranteed not to collide with any existing public alias names
-  * for the account in question
-  */
-  private def newPublicAliasName(account: Account): String = {
+   * Generates a new alias name that is guaranteed not to collide with any existing public alias names
+   * for the account in question
+   */
+  private def newPublicAliasName(originalPartyBankId : String, originalPartyAccountId : String): String = {
     val firstAliasAttempt = "ALIAS_" + Random.nextLong().toString.take(6)
 
     /**
      * Returns true if @publicAlias is already the name of a public alias within @account
      */
-    def isDuplicate(publicAlias: String, account: Account) = {
-      account.otherAccountsMetadata.objs.find(oAcc => {
-        oAcc.publicAlias.get == publicAlias
-      }).isDefined
+    def isDuplicate(publicAlias: String) = {
+      val query = QueryBuilder.start("originalPartyBankId").is(originalPartyBankId).put("originalPartyAccountId").is(originalPartyAccountId).get()
+      Metadata.findAll(query).exists(m => {
+        m.publicAlias.get == publicAlias
+      })
     }
 
     /**
      * Appends things to @publicAlias until it a unique public alias name within @account
      */
-    def appendUntilUnique(publicAlias: String, account: Account): String = {
+    def appendUntilUnique(publicAlias: String): String = {
       val newAlias = publicAlias + Random.nextLong().toString.take(1)
-      if (isDuplicate(newAlias, account)) appendUntilUnique(newAlias, account)
+      if (isDuplicate(newAlias)) appendUntilUnique(newAlias)
       else newAlias
     }
 
-    if (isDuplicate(firstAliasAttempt, account)) appendUntilUnique(firstAliasAttempt, account)
+    if (isDuplicate(firstAliasAttempt)) appendUntilUnique(firstAliasAttempt)
     else firstAliasAttempt
   }
 
   private def findSameHolder(account: Account, otherAccountHolder: String): Option[Metadata] = {
-    val otherAccsMetadata = account.otherAccountsMetadata.objs
+    val query = QueryBuilder.start("originalPartyBankId").is(account.bankPermalink).put("originalPartyAccountId").is(account.permalink.get).get
+    val otherAccsMetadata = Metadata.findAll(query)
     otherAccsMetadata.find{ _.holder.get == otherAccountHolder}
   }
   def createMetadataReference: Box[Unit] = {
@@ -237,7 +239,6 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
                 .originalPartyAccountId(a.permalink.get)
                 .holder("")
                 .save
-            a.appendMetadata(metadata)
             metadata
           }
           else{
@@ -250,7 +251,7 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
               }
               case _ =>{
                 logger.info("creating metadata record for for " + realOtherAccHolder + " with a public alias")
-                val randomAliasName = newPublicAliasName(a)
+                val randomAliasName = newPublicAliasName(a.bankPermalink, a.permalink.get)
                 //create a new meta data record for the other account
                 val metadata =
                   Metadata
@@ -260,7 +261,6 @@ class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBP
                     .holder(realOtherAccHolder)
                     .publicAlias(randomAliasName)
                     .save
-                a.appendMetadata(metadata)
                 metadata
               }
             }

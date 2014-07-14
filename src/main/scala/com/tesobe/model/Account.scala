@@ -82,7 +82,6 @@ class Account extends MongoRecord[Account] with ObjectIdPk[Account] with Loggabl
   object currency extends StringField(this, 255)
   object iban extends StringField(this, 255)
   object lastUpdate extends DateField(this)
-  object otherAccountsMetadata extends ObjectIdRefListField(this, Metadata)
 
   def bankName : String = bankID.obj match  {
     case Full(bank) => bank.name.get
@@ -124,12 +123,6 @@ class Account extends MongoRecord[Account] with ObjectIdPk[Account] with Loggabl
     val ordering = QueryBuilder.start(orderingParams.field.getOrElse(DefaultSortField)).is(orderingParams.order.orderValue).get
 
     OBPEnvelope.findAll(mongoParams, ordering, Limit(limit), Skip(offset))
-  }
-
-  def appendMetadata(metadata: Metadata): Unit = {
-    logger.info("appending the metadata record to the existing metadata references")
-    this.otherAccountsMetadata(metadata.id.is :: this.otherAccountsMetadata.get)
-    this.save
   }
 }
 
