@@ -36,10 +36,9 @@ import net.liftweb.record.MandatoryTypedField
 import net.liftweb.mongodb.record.field._
 import net.liftweb.mongodb.record.{MongoMetaRecord, MongoRecord, BsonMetaRecord, BsonRecord}
 import net.liftweb.common.{Box, Full, Empty, Failure}
-import java.util.Calendar
+import java.util.{UUID, Calendar, Date}
 import java.text.SimpleDateFormat
 import net.liftweb.json.DefaultFormats
-import java.util.Date
 import net.liftweb.record.field.{StringField,LongField}
 import net.liftweb.json.JsonAST._
 import net.liftweb.mongodb.record.{MongoId}
@@ -153,6 +152,10 @@ case class InsertedEnvelopes(l: List[OBPEnvelope])
 // Seems to map to a collection of the plural name
 class OBPEnvelope private() extends MongoRecord[OBPEnvelope] with ObjectIdPk[OBPEnvelope] with Loggable{
   def meta = OBPEnvelope
+
+  object transactionId extends StringField(this, 100) {
+    override def defaultValue = UUID.randomUUID.toString
+  }
 
   // This creates a json attribute called "obp_transaction"
   object obp_transaction extends BsonRecordField(this, OBPTransaction)
