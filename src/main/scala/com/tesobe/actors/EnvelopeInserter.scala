@@ -122,23 +122,17 @@ object EnvelopeInserter extends LiftActor with Loggable{
       val copiesToInsert = identicalEnvelopes drop matches.size
       logger.info("Insert operation id " + insertID + " copies being inserted: " + copiesToInsert.size)
 
-      copiesToInsert.flatMap(e => {
-          e.createMetadataReference match {
-            case Full(_) => {
-              e.saveTheRecord()
-              Full(e)
-            }
-            case Failure(msg, _, _ ) => {
-              logger.warn("could not save envelope ${e.id.get} because we could not create a meta data reference.\n Error: "+msg)
-              Empty
-            }
-            case _ =>{
-              logger.warn("could not save envelope ${e.id.get} because we could not create a meta data reference.")
-              Empty
-            }
-          }
-        }
-      )
+      val attemptedSaved = copiesToInsert.map(_.saveTheRecord())
+
+      attemptedSaved.foreach{
+        case Failure(msg, _, _) => logger.warn("could not save envelope: " + msg)
+        case Empty => logger.warn("could not save envelope -- reason unknown")
+        case _ => //do nothing
+      }
+
+      attemptedSaved.collect{
+        case Full(s) => s
+      }
     }
   }
 

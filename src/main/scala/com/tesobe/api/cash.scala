@@ -153,7 +153,6 @@ object CashAccountAPI extends RestHelper with Loggable {
                   val env = OBPEnvelope.createRecord.
                     obp_transaction(transaction).save
                   account.balance(account.balance.get + amount).lastUpdate(now)
-                  env.createMetadataReference
                   env.save
 
                   JsonResponse(SuccessMessage("transaction successfully added"), Nil, Nil, 200)
